@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+
+# Airflow (local runtime)
+airflow_home/
+
+# MLflow tracking & artifacts (generated)
+mlruns/
+mlruns_artifacts/
+mlartifacts/
+mlflow.db
+
+# Pipeline outputs
+artifacts/
+data/
+
+# Local outputs / tables (optional)
+run_comparison.csv
+
+# OS
+.DS_Store
