@@ -8,11 +8,11 @@ This project implements an end-to-end MLOps pipeline for training, tracking, val
 
 The pipeline integrates:
 
-* **MLflow** for experiment tracking and model registry
-* **Apache Airflow** for pipeline orchestration
-* **GitHub Actions** for CI validation and quality gates
+* **MLflow** for experiment tracking and model registry  
+* **Apache Airflow** for pipeline orchestration  
+* **GitHub Actions** for CI validation and quality gates  
 
-The goal of this milestone is to demonstrate how a machine learning workflow can be automated and monitored using modern MLOps practices.
+The goal of this milestone is to demonstrate how a machine learning workflow can be automated, validated, and tracked in a reproducible and production-style pipeline.
 
 ---
 
@@ -22,167 +22,323 @@ The goal of this milestone is to demonstrate how a machine learning workflow can
 .
 ├── dags/
 │   └── train_pipeline.py
-│
-├── .github/workflows/
-│   └── train_and_validate.yml
-│
+├── data/
+├── artifacts/
+├── src/
+├── preprocess.py
 ├── train.py
-├── compare_runs.py
 ├── model_validation.py
 ├── register_model.py
-│
-├── requirements.txt
+├── compare_runs.py
 ├── run_comparison.csv
 ├── lineage_report.md
-└── README.md
+├── requirements.txt
+├── requirements-airflow.txt
+├── mlflow.db
+└── .github/workflows/
+    └── train_and_validate.yml
 ```
 
 ---
 
-## ML Pipeline Components
+## Machine Learning Workflow
 
-### 1. Model Training
+The pipeline contains four major stages.
 
-**train.py**
+### 1. Data Preprocessing
 
-This script:
+`preprocess.py`
 
-* trains a machine learning model
-* logs parameters and metrics to MLflow
-* saves artifacts for reproducibility
+This script prepares the dataset used for training.
 
-Example:
+Steps performed:
 
-```
-python train.py --C 1.0
-```
+- Loads dataset
+- Removes duplicates
+- Saves processed dataset as CSV artifact
 
----
-
-### 2. Experiment Comparison
-
-**compare_runs.py**
-
-This script compares multiple MLflow runs and generates a summary table.
-
-Example:
+Example output:
 
 ```
-python compare_runs.py
-```
-
-Output:
-
-```
-run_comparison.csv
+artifacts/preprocessed_<run_id>.csv
 ```
 
 ---
 
-### 3. Model Validation (Quality Gate)
+### 2. Model Training
 
-**model_validation.py**
+`train.py`
 
-Implements automated model checks using performance thresholds.
+This script trains a Logistic Regression model and logs experiment metadata to MLflow.
 
-Example:
+Tracked information includes:
+
+- Hyperparameters
+- Accuracy
+- F1 score
+- Model artifact
+- Training dataset artifact
+- Model hash
+- Data hash
+
+This ensures full reproducibility of every experiment run.
+
+---
+
+### 3. Quality Gate Validation
+
+`model_validation.py`
+
+Before a model is accepted into the pipeline, it must pass validation thresholds.
+
+Validation rules:
 
 ```
-python model_validation.py --run-id RUN_ID --min-accuracy 0.70 --min-f1 0.60
+Accuracy >= 0.90
+F1 Score >= 0.85
 ```
 
-If the model fails validation, the script exits with a failure code.
+If the model does not meet these requirements, the pipeline fails.
+
+This acts as a **CI quality gate**.
 
 ---
 
 ### 4. Model Registration
 
-**register_model.py**
+`register_model.py`
 
-Registers the trained model in the MLflow Model Registry and moves it to the **Staging** stage.
+If validation succeeds, the model is registered in the MLflow Model Registry.
 
-Example:
+Model lifecycle stages:
 
 ```
-python register_model.py \
---tracking-uri sqlite:///mlflow.db \
---run-id RUN_ID \
---model-name milestone3-model \
---stage Staging
+None → Staging → Production
 ```
+
+In this milestone the pipeline registers models into **Staging**.
 
 ---
 
-## Airflow Pipeline
+## Experiment Tracking
 
-The Airflow DAG (`train_pipeline.py`) orchestrates the ML workflow.
+All experiments are tracked using **MLflow**.
 
-Pipeline steps:
+Tracking backend:
+
+```
+mlflow.db
+```
+
+Artifact storage:
+
+```
+mlruns_artifacts/
+```
+
+Each MLflow run logs:
+
+- hyperparameters
+- evaluation metrics
+- training dataset artifact
+- model artifact
+- lineage metadata
+
+---
+
+## Pipeline Orchestration
+
+The pipeline is orchestrated using **Apache Airflow**.
+
+DAG file:
+
+```
+dags/train_pipeline.py
+```
+
+Pipeline flow:
 
 ```
 preprocess_data
       ↓
 train_model
       ↓
+validate_model
+      ↓
 register_model
 ```
 
-Run the DAG locally:
+The DAG includes:
 
-```
-airflow dags test train_pipeline 2026-03-03
-```
+- retries
+- retry delays
+- failure callbacks
+- task dependency ordering
 
 ---
 
-## Continuous Integration (CI)
+## CI/CD Pipeline
 
-GitHub Actions automatically runs:
+Continuous integration is implemented with **GitHub Actions**.
 
-* model training
-* validation checks
-* quality gate enforcement
-
-CI configuration is located in:
+Workflow file:
 
 ```
 .github/workflows/train_and_validate.yml
 ```
 
----
+The workflow performs:
 
-## Lineage Documentation
+1. Install project dependencies
+2. Run model training
+3. Execute validation quality gate
+4. Upload MLflow tracking database as CI artifact
 
-`lineage_report.md` documents:
-
-* data sources
-* preprocessing steps
-* model artifacts
-* experiment tracking
-
-This ensures reproducibility and transparency of the ML workflow.
+This ensures every commit is automatically validated.
 
 ---
 
-## Requirements
+## Lineage Tracking
+
+Lineage metadata is stored in:
+
+```
+artifacts/lineage.json
+```
+
+The file records:
+
+```
+run_id
+hyperparameters
+metrics
+model_hash
+data_hash
+tracking metadata
+```
+
+A detailed explanation of lineage tracking is provided in:
+
+```
+lineage_report.md
+```
+
+---
+
+## Run Comparison
+
+Multiple training runs were executed with different hyperparameters.
+
+Results are stored in:
+
+```
+run_comparison.csv
+```
+
+This file compares metrics across runs to identify the best-performing model.
+
+---
+
+## Local Setup
 
 Install dependencies:
 
 ```
 pip install -r requirements.txt
+pip install -r requirements-airflow.txt
 ```
 
 ---
 
-## Summary
+## Manual Pipeline Execution
 
-This project demonstrates an automated machine learning pipeline that includes:
+The pipeline can be executed manually without Airflow:
 
-* experiment tracking with MLflow
-* automated validation using quality gates
-* model registry management
-* workflow orchestration with Airflow
-* CI validation using GitHub Actions
+```
+DATA_PATH=$(python preprocess.py --outdir artifacts --run-suffix test)
 
-This architecture ensures reproducibility, traceability, and automation for ML model development.
+RUN_ID=$(python train.py \
+  --tracking-uri sqlite:///mlflow.db \
+  --experiment milestone3 \
+  --C 1.0 \
+  --data-path "$DATA_PATH")
 
+python model_validation.py \
+  --tracking-uri sqlite:///mlflow.db \
+  --run-id "$RUN_ID" \
+  --min-accuracy 0.90 \
+  --min-f1 0.85
+
+python register_model.py \
+  --tracking-uri sqlite:///mlflow.db \
+  --run-id "$RUN_ID" \
+  --model-name milestone3-model \
+  --stage Staging
+```
+
+---
+
+## Running the Airflow Pipeline
+
+Initialize Airflow:
+
+```
+export AIRFLOW_HOME=$(pwd)/airflow_home
+airflow db init
+```
+
+Create admin user:
+
+```
+airflow users create \
+  --username admin \
+  --password admin \
+  --firstname Admin \
+  --lastname User \
+  --role Admin \
+  --email admin@example.com
+```
+
+Start services:
+
+```
+airflow webserver --port 8080
+```
+
+In a second terminal:
+
+```
+airflow scheduler
+```
+
+Then trigger the **train_pipeline** DAG in the Airflow UI.
+
+---
+
+## Automated Sanity Checks
+
+Verify required files exist:
+
+```
+ls dags/train_pipeline.py \
+   model_validation.py \
+   train.py \
+   register_model.py \
+   preprocess.py \
+   requirements.txt \
+   .github/workflows/train_and_validate.yml \
+   lineage_report.md
+```
+
+---
+
+## Key MLOps Features Demonstrated
+
+✔ MLflow experiment tracking  
+✔ Airflow workflow orchestration  
+✔ CI/CD pipeline with GitHub Actions  
+✔ Model validation quality gates  
+✔ Experiment lineage tracking  
+✔ Automated model registration
+
+---
