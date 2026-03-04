@@ -1,16 +1,17 @@
-name: Train and Validate (Milestone 3)
+name: Train and Validate
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   pull_request:
+    branches: [ "main" ]
 
 jobs:
-  train-validate:
+  train-and-validate:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -23,18 +24,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Train model (MLflow sqlite)
+      - name: Run training (MLflow local)
+        env:
+          MLFLOW_TRACKING_URI: "file:./mlruns"
         run: |
-          RUN_ID=$(python train.py --tracking-uri sqlite:///mlflow.db --experiment milestone3 --C 1.0)
-          echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
-          echo "Run id: $RUN_ID"
+          python train.py --outdir artifacts --seed 1 --C 1.0
 
-      - name: Validate model (quality gate)
+      - name: Validate model quality gate
         run: |
-          python model_validation.py --tracking-uri sqlite:///mlflow.db --run-id $RUN_ID --min-accuracy 0.90 --min-f1 0.85
-
-      - name: Upload MLflow DB as CI evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: mlflow-db
-          path: mlflow.db
+          python model_validation.py
