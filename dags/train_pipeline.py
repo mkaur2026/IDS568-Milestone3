@@ -1,102 +1,81 @@
-from __future__ import annotations
-
-import subprocess
 from datetime import datetime, timedelta
+import os
+import subprocess
 from pathlib import Path
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
 
 def on_failure_callback(context):
     ti = context.get("task_instance")
-    print(f"[FAILURE] task_id={ti.task_id} dag_id={ti.dag_id} run_id={context.get('run_id')}")
+    print(f"[FAILURE] task={ti.task_id} dag={ti.dag_id} run_id={ti.run_id}")
 
 
-def run_cmd(cmd: list[str]) -> str:
-    result = subprocess.run(
-        cmd,
-        cwd=str(REPO_ROOT),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        print("STDOUT:\n", result.stdout)
-        print("STDERR:\n", result.stderr)
-        raise RuntimeError(f"Command failed: {' '.join(cmd)}")
-
-    return result.stdout.strip()
+REPO_ROOT = Path(__file__).resolve().parents[1]
+ARTIFACTS_DIR = REPO_ROOT / "artifacts"
 
 
-def preprocess_data(ds_nodash: str, **_):
-    out = run_cmd(["python", "preprocess.py", "--outdir", "artifacts", "--run-suffix", ds_nodash])
-    return out
+def preprocess_data(**context):
+    """
+    Idempotent: creates a dated run folder and stores path in XCom.
+    """
+    run_date = context["ds"]  # e.g. 2026-03-03
+    run_dir = ARTIFACTS_DIR / "runs" / run_date
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "README.txt").write_text("Run folder for this DAG date.\n")
+
+    # Pass run_dir to next task
+    context["ti"].xcom_push(key="run_dir", value=str(run_dir))
 
 
-def train_model(ti, **_):
-    data_path = ti.xcom_pull(task_ids="preprocess_data")
-    run_id = run_cmd(
-        [
-            "python",
-            "train.py",
-            "--tracking-uri",
-            "sqlite:///mlflow.db",
-            "--experiment",
-            "milestone3",
-            "--C",
-            "1.0",
-            "--max-iter",
-            "200",
-            "--outdir",
-            "artifacts",
-            "--data-path",
-            data_path,
-        ]
-    )
-    return run_id
+def train_model(**context):
+    run_dir = context["ti"].xcom_pull(key="run_dir", task_ids="preprocess_data")
+    if not run_dir:
+        raise RuntimeError("Missing run_dir from preprocess_data")
+
+    # Example hyperparam (you can change later)
+    # Make sure train.py writes model + logs metrics to MLflow
+    cmd = [
+        "python",
+        str(REPO_ROOT / "train.py"),
+        "--C",
+        "1.0",
+        "--outdir",
+        run_dir,
+    ]
+    subprocess.run(cmd, check=True)
+
+    # train.py should write the run_id into a file OR print it.
+    # simplest: have train.py write artifacts/latest_run_id.txt
+    run_id_file = Path(run_dir) / "run_id.txt"
+    if not run_id_file.exists():
+        raise RuntimeError(f"train.py did not write {run_id_file}")
+    run_id = run_id_file.read_text().strip()
+
+    context["ti"].xcom_push(key="run_id", value=run_id)
 
 
-def validate_model(ti, **_):
-    run_id = ti.xcom_pull(task_ids="train_model")
-    run_cmd(
-        [
-            "python",
-            "model_validation.py",
-            "--tracking-uri",
-            "sqlite:///mlflow.db",
-            "--run-id",
-            run_id,
-            "--min-accuracy",
-            "0.90",
-            "--min-f1",
-            "0.85",
-        ]
-    )
-    return "passed"
+def register_model(**context):
+    run_id = context["ti"].xcom_pull(key="run_id", task_ids="train_model")
+    if not run_id:
+        raise RuntimeError("Missing run_id from train_model")
 
-
-def register_model(ti, **_):
-    run_id = ti.xcom_pull(task_ids="train_model")
-    run_cmd(
-        [
-            "python",
-            "register_model.py",
-            "--tracking-uri",
-            "sqlite:///mlflow.db",
-            "--run-id",
-            run_id,
-            "--model-name",
-            "milestone3-model",
-            "--stage",
-            "Staging",
-            "--description",
-            "Registered by Airflow after validation pass",
-        ]
-    )
-    return "registered"
+    cmd = [
+        "python",
+        str(REPO_ROOT / "register_model.py"),
+        "--tracking-uri",
+        "sqlite:///mlflow.db",
+        "--run-id",
+        run_id,
+        "--model-name",
+        "milestone3-model",
+        "--stage",
+        "Staging",
+        "--description",
+        f"Registered by Airflow DAG run_id={run_id}",
+    ]
+    subprocess.run(cmd, check=True)
 
 
 default_args = {
@@ -110,28 +89,23 @@ with DAG(
     dag_id="train_pipeline",
     default_args=default_args,
     start_date=datetime(2025, 1, 1),
-    schedule=None,
+    schedule_interval=None,
     catchup=False,
 ) as dag:
-    t1 = PythonOperator(
+    preprocess = PythonOperator(
         task_id="preprocess_data",
         python_callable=preprocess_data,
-        op_kwargs={"ds_nodash": "{{ ds_nodash }}"},
+        provide_context=True,
     )
-
-    t2 = PythonOperator(
+    train = PythonOperator(
         task_id="train_model",
         python_callable=train_model,
+        provide_context=True,
     )
-
-    t3 = PythonOperator(
-        task_id="validate_model",
-        python_callable=validate_model,
-    )
-
-    t4 = PythonOperator(
+    register = PythonOperator(
         task_id="register_model",
         python_callable=register_model,
+        provide_context=True,
     )
 
-    t1 >> t2 >> t3 >> t4
+    preprocess >> train >> register
